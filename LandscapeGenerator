@@ -1,0 +1,491 @@
+from PIL import Image, ImageDraw
+import math
+from perlin_noise import PerlinNoise
+import random
+import numpy as np
+import csv
+import matplotlib.pyplot as plt
+import os
+from threading import Thread
+
+
+MAP_SIZE = (512, 512) # taille de la carte
+SCALE = 256 # échelle de la carte
+EXPO_HEIGHT = 2 # exposant pour la normalisation de la hauteur 
+
+# Couleurs pour la texture
+COLORS = {
+    "grass" : (34,139,34),
+    "forest" : (0, 100, 0),
+    "sand" : (238, 214, 175),
+    "water" : (65,105,225),
+    "rock" : (139, 137, 137),
+    "snow" : (255, 250, 250)
+}
+
+
+# Vecteurs pour le calcul de la pente 
+lut_vectors = (
+    (-1, 1), (0, 1), (1, 1),
+    (-1, 0),         (1, 0),
+    (-1, -1), (0, -1), (1, -1)
+)
+
+'''
+    Déplace un fichier dans un dossier
+    filename : nom du fichier à déplacer
+'''
+
+def put_file_in_folder():
+    folder_path = "./map" # chemin du dossier
+    if not os.path.exists(folder_path):
+        os.makedirs(folder_path) # crée le dossier s'il n'existe pas
+    
+    for file in os.listdir("."):
+        if file.endswith(".png"):
+            os.rename(file, os.path.join(folder_path, file))
+            print(f"Fichier {file} déplacé avec succès dans {folder_path}")
+
+'''
+    Supprime un fichier dans le dossier map
+    filename : nom du fichier à supprimer
+'''
+
+def delete_file(filename):
+    folder_path = "./map"
+    file_path = os.path.join(folder_path, filename)
+
+    if os.path.exists(file_path):
+        os.remove(file_path) # supprime le fichier
+        print(f"Fichier {filename} supprimé avec succès")
+    else:
+        print(f"Erreur: Le fichier {filename} n'existe pas")
+
+
+'''
+    Supprime tous les fichiers dans le dossier map
+'''
+
+def delete_all_files():
+
+    folder_path = "./map"
+    count = 0 # compteur de fichiers supprimés
+
+    for filename in os.listdir(folder_path):
+        file_path = os.path.join(folder_path, filename)
+        os.remove(file_path)
+        count += 1
+        print(f"Fichier {filename} supprimé avec succès")
+    print(f"Total de {count} fichiers supprimés")
+
+
+'''
+    Met à jour la valeur d'un point de la carte de hauteur
+    coords : tuple (x, y)
+    seed : générateur de bruit de perlin 
+'''
+
+def update_point(coords, seed):
+    x, y = coords
+    noise = PerlinNoise(octaves=6, seed=seed) # utilisation de la librairie perlin noise pour générer le bruit de perlin 
+    value = noise([x/SCALE, y/SCALE]) 
+    return value # retourne la valeur du bruit de perlin pour les coordonnées x, y
+
+'''
+    Normalise la carte de hauteur entre 0 et 1
+    input_map : la carte à normaliser
+    minimum : valeur minimale de la carte
+    maximum : valeur maximale de la carte
+    expo : exposant pour la normalisation 
+'''
+
+def normalize(input_map, minimum, maximum, expo):
+    scale = maximum - minimum
+    output_map = np.zeros(MAP_SIZE)
+    for x in range(MAP_SIZE[0]):
+        for y in range(MAP_SIZE[1]):
+            output_map[x][y] = ((input_map[x][y] - minimum)/scale)**expo
+    return output_map
+
+
+'''
+    Génère la carte 
+
+'''
+def generate_heightmap():
+    seed = int(random.random()*1000) # générateur de seed aléatoire pour obtenir des cartes différentes
+    minimum = 0
+    maximum = 0
+    heightmap = np.zeros(MAP_SIZE) # initialise la carte avec une taille de 512x512 avec des valeurs nulles
+
+    # remplit la carte avec les valeurs de bruit de perlin
+    for x in range(MAP_SIZE[0]):
+        for y in range(MAP_SIZE[1]):
+            new_value = update_point((x, y), seed)
+            heightmap[x][y] = new_value
+            if new_value < minimum:
+                minimum = new_value
+            if new_value > maximum:
+                maximum = new_value
+    print("Carte de hauteur générée avec la seed :", seed)
+    return normalize(heightmap, minimum, maximum, EXPO_HEIGHT)
+
+'''
+    Vérifie si les coordonnées sont en dehors de la carte
+    coord : tuple (x, y)
+'''
+
+def out_of_bounds(coord):
+    if coord[0] < 0 or coord[0] >= MAP_SIZE[0]:
+        return True # si les coordonnées sont en dehors de la carte
+    if coord[1] < 0 or coord[1] >= MAP_SIZE[1]:
+        return True # si les coordonnées sont en dehors de la carte
+    return False # si les coordonnées sont dans la carte
+
+'''
+    Génère la carte de pente
+    heightmap : map
+'''
+def generate_slopemap(heightmap):
+    slopemap = np.zeros(MAP_SIZE)
+    minimum = 0
+    maximum = 0
+
+    for x in range(MAP_SIZE[0]):
+        for y in range(MAP_SIZE[1]):
+            
+            slope = 0
+            for vector in lut_vectors:
+                coord = (x+vector[0], y+vector[1])
+                if out_of_bounds(coord):
+                    continue
+                slope += abs(heightmap[x][y]-heightmap[coord[0]][coord[1]])
+            slope = slope/8
+            slopemap[x][y] = slope
+            if slope < minimum:
+                minimum = slope
+            if slope > maximum:
+                maximum = slope
+    print("Slopemap generated")
+    return normalize(slopemap, minimum, maximum, 1)
+
+'''
+    Retourne la couleur correspondant à la hauteur et la pente
+'''
+def get_color(height, slope):
+    if height > 0.2 and height < 0.9 and slope > 0.45:
+       return COLORS["rock"]
+    if height <= 0.1:
+        return COLORS["water"]
+    elif height > 0.1 and height <= 0.225:
+        return COLORS["sand"]
+    elif height > 0.225 and height <= 0.45:
+        return COLORS["grass"]
+    elif height > 0.45 and height <= 0.85:
+        return COLORS["forest"]
+    elif height > 0.85 and height <= 0.9:
+        return COLORS["rock"]
+    elif height > 0.9:
+        return COLORS["snow"]
+
+'''
+    Génère les sommets de la carte
+    heightmap : map
+'''
+def generate_vertices(heightmap):
+    vertices = [] # liste des sommets
+    base = (-1, -0.75, -1) # coordonnées de base
+    size = 2 # taille de la carte
+    max_height = 0.5 # hauteur maximale
+    step_x = size/(MAP_SIZE[0]-1) 
+    step_y = size/(MAP_SIZE[1]-1)
+
+    for x in range(MAP_SIZE[0]):
+        for y in range(MAP_SIZE[1]):
+            x_coord = base[0] + step_x*x  #
+            y_coord = base[1] + max_height*heightmap[x][y]
+            z_coord = base[2] + step_y*y
+            vertices.append((x_coord, y_coord, z_coord))
+    print("génération des sommets terminée")
+    return vertices # retourne la liste des sommets
+    
+
+'''
+    Génère les bordures et les surfaces de la carte
+'''
+def generate_tris():
+    edges = [] # bordures
+    surfaces = [] 
+
+    for x in range(MAP_SIZE[0]-1): 
+        for y in range(MAP_SIZE[1]-1):
+            
+            base = x*MAP_SIZE[0]+y # base pour les indices des sommets
+            a = base
+            b = base+1
+            c = base+MAP_SIZE[0]+1
+            d = base+MAP_SIZE[0]
+            edges.append((a, b)) # ajoute les bordures
+            edges.append((b, c)) 
+            edges.append((c, a))
+            edges.append((c, d))
+            edges.append((d, a))
+            surfaces.append((a, b, c))
+            surfaces.append((a, c, d))
+    print("génération des tris terminée")
+    return edges, surfaces
+
+'''
+    Génère un fichier csv à partir de la carte pour meilleur visualisation des données 
+    map : carte
+    filename : nom du fichier
+'''
+def generate_csv(map, filename):
+    filename = filename + ".csv"
+    with open(filename, "w") as file:
+        for x in range(MAP_SIZE[0]):
+            row_data = ",".join(str(map[x][y]) for y in range(MAP_SIZE[1])) # écrit les données de la carte dans le fichier
+            file.write(row_data + "\n")
+
+    print(f"{filename} created successfully.")
+
+    return
+
+''' 
+    Exporte la texture de la carte
+'''
+def export_texture(heightmap, slopemap, filename):
+    image = Image.new('RGB', MAP_SIZE, 0)
+    draw = ImageDraw.ImageDraw(image)
+    for x in range(MAP_SIZE[0]):
+        for y in range(MAP_SIZE[1]):
+            draw.point((x, y), get_color(heightmap[x][y], slopemap[x][y]))
+    image.save(filename + ".png") 
+    print(filename, "sauvegardé")
+    return
+
+'''
+    Génère le chemin le plus court entre deux points choisi par l'utilisateur
+    start : point de départ
+    end : point d'arrivée
+    matrix : matrice de pente
+    heightmap : map
+'''
+def shortest_path(start, end, matrix, heightmap):
+    rows, cols = len(matrix), len(matrix[0])
+    distance = np.full((rows, cols), np.inf)  # Initialise les distances avec l'infini
+    visited = np.zeros((rows, cols), dtype=bool)  # Tableau pour marquer les points visités
+    distance[start[0]][start[1]] = 0  # La distance du point de départ à lui-même est zéro
+
+    # Parcours de la matrice pour calculer les distances
+    for i in range(start[0], rows):
+        for j in range(start[1], cols):
+            if (i, j) != start:
+                # Distance depuis le voisin gauche ou haut (si existant)
+                distance[i][j] = abs(matrix[i][j]) + min(
+                    distance[i - 1][j] if i > 0 else np.inf,
+                    distance[i][j - 1] if j > 0 else np.inf
+                )
+
+    return distance
+
+'''
+    Trouve le chemin optimal entre deux points
+    distance : matrice des distances
+    start : point de départ
+    end : point d'arrivée
+'''
+
+def find_optimal_path(distance, start, end):
+    path = [end]
+    i, j = end
+
+    # Remontez le chemin depuis `end` vers `start`
+    while (i, j) != start:
+        if i > 0 and distance[i - 1, j] <= distance[i, j - 1]:
+            i -= 1
+        elif j > 0 and distance[i, j - 1] <= distance[i - 1, j]:
+            j -= 1
+        else:
+            break
+        path.append((i, j))
+
+    path.reverse()
+    return path
+
+'''
+    Exporte la carte avec le chemin optimal en rouge
+    distance : matrice des distances
+    filenameDijkstra : nom du fichier
+    heightmap : carte de hauteur
+    slopemap : carte de pente
+    start : point de départ
+    end : point d'arrivée
+'''
+
+def export_map_dijkstra(distance, filenameDijkstra, heightmap, slopemap, start, end):
+    shortest_path_route = find_optimal_path(distance, start, end)  # Récupère le chemin optimal de start à end
+
+    # Crée une nouvelle image de la taille de la carte
+    image = Image.new('RGB', MAP_SIZE, 0)
+    draw = ImageDraw.Draw(image)
+
+    for x in range(MAP_SIZE[0]):
+        for y in range(MAP_SIZE[1]):
+            # Si le point est dans le chemin optimal entre start et end, trace-le en rouge
+            if (x, y) in shortest_path_route:
+                draw.point((x, y), (255, 0, 0))
+            else:
+                # Sinon, utilise les couleurs en fonction des maps de hauteur et de pente
+                draw.point((x, y), get_color(heightmap[x][y], slopemap[x][y]))        
+
+    # Sauvegarde l'image avec le chemin en rouge
+    image.save(filenameDijkstra + ".png")
+    print(filenameDijkstra, "sauvegardé")
+
+'''
+    Visualise la carte en 3D avec le chemin optimal
+    final_landscape : carte de hauteur
+    path : chemin optimal
+'''
+def plot_dijkstra(final_landscape, path):
+    rows, cols = final_landscape.shape
+    x = np.arange(rows)
+    y = np.arange(cols)
+    x, y = np.meshgrid(x, y)
+
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+
+    ax.plot_surface(x, y, final_landscape, cmap='terrain', alpha=0.7)
+
+    path_x, path_y = zip(*path)
+    path_z = final_landscape[path_x, path_y]
+    ax.plot(path_x, path_y, path_z, color='red', linewidth=2, marker='o', markersize=5, markerfacecolor='red')
+
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Hauteur')
+    ax.set_title('Paysage 3D avec Chemin Optimal')
+
+    plt.show()
+
+
+def menu():
+    heightmap = None
+    slopemap = None
+    vertices = None
+    tris = None
+    distance = None
+    path = None
+    start = (-1, -1)
+    end = (-1, -1)
+
+    while True:
+        print("+------------------------------------+")
+        print("|              Menu                  |")
+        print("|------------------------------------|")
+        print("| 1. Générer la carte                |")
+        print("| 2. Exporter la carte               |")
+        print("| 3. Exporter la carte en CSV        |")
+        print("| 4. Calculer et exporter le chemin  |")
+        print("| 5. Supprimer un fichier            |")
+        print("| 6. Supprimer tous les fichiers     |")
+        print("| 10. Quitter                        |")
+        print("+------------------------------------+")
+
+        choice = input("Choisissez une option: ")
+
+        if choice == "1":
+            print("Génération de la carte...")
+            heightmap = generate_heightmap()  
+            slopemap = generate_slopemap(heightmap)  
+            vertices = generate_vertices(heightmap) 
+            tris = generate_tris()  
+            print("Carte générée avec succès.")
+
+        elif choice == "2":
+            if heightmap is not None and slopemap is not None:
+                filename = input("Entrez le nom de votre map (ex: map):")
+                export_texture(heightmap, slopemap, filename)
+                put_file_in_folder()
+            else:
+                print("Erreur: La carte n'a pas été générée. Veuillez générer la carte d'abord (Option 1).")
+
+        elif choice == "3":
+            if heightmap is not None:
+                filename = input("Entrez le nom du fichier CSV (ex: matrice): ")
+                generate_csv(heightmap, filename)
+            else:
+                print("Erreur: La matrice n'a pas été générée. Veuillez générer la carte d'abord (Option 1).")
+
+        elif choice == "4":
+            if heightmap is not None and slopemap is not None:
+                while start[0] < 0 or start[0] >= MAP_SIZE[0] or start[1] < 0 or start[1] >= MAP_SIZE[1] or end[0] < 0 or end[0] >= MAP_SIZE[0] or end[1] < 0 or end[1] >= MAP_SIZE[1]:
+                    start = int(input("Entrez la coordonnée x du point de départ: ")), int(input("Entrez la coordonnée y du point de départ: "))
+                    end = int(input("Entrez la coordonnée x du point d'arrivée: ")), int(input("Entrez la coordonnée y du point d'arrivée: "))               
+                distance = shortest_path(start, end, slopemap, heightmap)
+                path = find_optimal_path(distance, start, end)
+
+                print(f'Chemin optimal de {start} à {end}: {path}')
+                print(f'Nombre de points dans le chemin: {len(path)}')
+                
+                filenameDikstra = input("Entrez le nom du fichier pour la carte Dijkstra (ex: dijkstra): ")
+
+                export_map_dijkstra(distance, filenameDikstra, heightmap, slopemap, start, end)
+                print("Chemin optimal exporté avec succès.")
+                put_file_in_folder()
+                plot_dijkstra(heightmap, path)
+                print("Pour Re obtenir le menu il faut fermer la fenêtre de la visualisation 3D")
+            else:
+                print("Erreur: La carte n'a pas été générée. Veuillez générer la carte d'abord (Option 1).")
+
+        elif choice == "5":
+            filename = input("Entrez le nom du fichier à supprimer: ")
+            delete_file(filename)
+
+        elif choice == "6":
+            delete_all_files()
+
+        elif choice == "10":
+            print("Etes-vous sûr de vouloir quitter le programme ? (O/N)")
+            answer = input()
+            if answer == "O":
+                print("Vraiment vraiment sûr ? (O/N)")
+                answer = input()
+                if answer == "O":
+                    print("Dernière chance ! Voulez-vous vraiment partir ? (O/N)")
+                    answer = input()
+                    if answer == "O":
+                        print("Est-ce que je ne vais vraiment pas pouvoir te convaincre de rester ? (O/N)")
+                        answer = input()
+                        if answer == "O":
+                            print("Oh reste ici stp :(") 
+                            print("Je suis triste de te voir partir :(")
+                            print("Bon, c'est pas grave, à bientôt !")
+                            break
+                        else:
+                            print("Ouf, j'ai eu peur !")
+                            menu()
+                    else:
+                        print("Ouf, tu as changé d'avis !")
+                        menu()
+                else:
+                    print("Je suis rassuré que tu restes !")
+                    menu()
+            else:
+                print("D'accord, je reste alors !")
+                menu()
+
+            print("Sortie du programme.")
+            break
+
+        else:
+            print("Option invalide. Veuillez réessayer.")
+
+def main():
+    menu()
+
+
+if __name__ == "__main__":
+    main()
