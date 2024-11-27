@@ -6,13 +6,17 @@ import numpy as np
 import csv
 import matplotlib.pyplot as plt
 import os
-from threading import Thread
+from concurrent.futures import ThreadPoolExecutor
+import time
+from multiprocessing import Pool
+import dask.array as da
+
 
 
 MAP_SIZE = (512, 512) # taille de la carte
 SCALE = 256 # échelle de la carte
 EXPO_HEIGHT = 2 # exposant pour la normalisation de la hauteur 
-
+num_threads=4 # nombre de threads pour le calcul de la carte de pente
 # Couleurs pour la texture
 COLORS = {
     "grass" : (34,139,34),
@@ -31,12 +35,15 @@ lut_vectors = (
     (-1, -1), (0, -1), (1, -1)
 )
 
-'''
+
+
+def put_file_in_folder():
+
+    '''
     Déplace un fichier dans un dossier
     filename : nom du fichier à déplacer
 '''
 
-def put_file_in_folder():
     folder_path = "./map" # chemin du dossier
     if not os.path.exists(folder_path):
         os.makedirs(folder_path) # crée le dossier s'il n'existe pas
@@ -46,12 +53,15 @@ def put_file_in_folder():
             os.rename(file, os.path.join(folder_path, file))
             print(f"Fichier {file} déplacé avec succès dans {folder_path}")
 
-'''
+
+
+def delete_file(filename):
+
+    '''
     Supprime un fichier dans le dossier map
     filename : nom du fichier à supprimer
 '''
 
-def delete_file(filename):
     folder_path = "./map"
     file_path = os.path.join(folder_path, filename)
 
@@ -62,11 +72,14 @@ def delete_file(filename):
         print(f"Erreur: Le fichier {filename} n'existe pas")
 
 
-'''
+
+
+def delete_all_files():
+
+    '''
     Supprime tous les fichiers dans le dossier map
 '''
 
-def delete_all_files():
 
     folder_path = "./map"
     count = 0 # compteur de fichiers supprimés
@@ -79,19 +92,25 @@ def delete_all_files():
     print(f"Total de {count} fichiers supprimés")
 
 
-'''
+
+def update_point(coords, seed):
+
+    '''
     Met à jour la valeur d'un point de la carte de hauteur
     coords : tuple (x, y)
     seed : générateur de bruit de perlin 
 '''
 
-def update_point(coords, seed):
     x, y = coords
     noise = PerlinNoise(octaves=6, seed=seed) # utilisation de la librairie perlin noise pour générer le bruit de perlin 
     value = noise([x/SCALE, y/SCALE]) 
     return value # retourne la valeur du bruit de perlin pour les coordonnées x, y
 
-'''
+
+
+def normalize(input_map, minimum, maximum, expo):
+
+    '''
     Normalise la carte de hauteur entre 0 et 1
     input_map : la carte à normaliser
     minimum : valeur minimale de la carte
@@ -99,7 +118,6 @@ def update_point(coords, seed):
     expo : exposant pour la normalisation 
 '''
 
-def normalize(input_map, minimum, maximum, expo):
     scale = maximum - minimum
     output_map = np.zeros(MAP_SIZE)
     for x in range(MAP_SIZE[0]):
@@ -108,11 +126,14 @@ def normalize(input_map, minimum, maximum, expo):
     return output_map
 
 
-'''
+
+def generate_heightmap():
+    
+    '''
     Génère la carte 
 
 '''
-def generate_heightmap():
+
     seed = int(random.random()*1000) # générateur de seed aléatoire pour obtenir des cartes différentes
     minimum = 0
     maximum = 0
@@ -130,23 +151,29 @@ def generate_heightmap():
     print("Carte de hauteur générée avec la seed :", seed)
     return normalize(heightmap, minimum, maximum, EXPO_HEIGHT)
 
-'''
+
+
+def out_of_bounds(coord):
+
+    '''
     Vérifie si les coordonnées sont en dehors de la carte
     coord : tuple (x, y)
 '''
 
-def out_of_bounds(coord):
     if coord[0] < 0 or coord[0] >= MAP_SIZE[0]:
         return True # si les coordonnées sont en dehors de la carte
     if coord[1] < 0 or coord[1] >= MAP_SIZE[1]:
         return True # si les coordonnées sont en dehors de la carte
     return False # si les coordonnées sont dans la carte
 
-'''
+
+def generate_slopemap(heightmap):
+
+    '''
     Génère la carte de pente
     heightmap : map
 '''
-def generate_slopemap(heightmap):
+
     slopemap = np.zeros(MAP_SIZE)
     minimum = 0
     maximum = 0
@@ -169,10 +196,13 @@ def generate_slopemap(heightmap):
     print("Slopemap generated")
     return normalize(slopemap, minimum, maximum, 1)
 
-'''
+
+def get_color(height, slope):
+
+    '''
     Retourne la couleur correspondant à la hauteur et la pente
 '''
-def get_color(height, slope):
+
     if height > 0.2 and height < 0.9 and slope > 0.45:
        return COLORS["rock"]
     if height <= 0.1:
@@ -188,59 +218,15 @@ def get_color(height, slope):
     elif height > 0.9:
         return COLORS["snow"]
 
-'''
-    Génère les sommets de la carte
-    heightmap : map
-'''
-def generate_vertices(heightmap):
-    vertices = [] # liste des sommets
-    base = (-1, -0.75, -1) # coordonnées de base
-    size = 2 # taille de la carte
-    max_height = 0.5 # hauteur maximale
-    step_x = size/(MAP_SIZE[0]-1) 
-    step_y = size/(MAP_SIZE[1]-1)
 
-    for x in range(MAP_SIZE[0]):
-        for y in range(MAP_SIZE[1]):
-            x_coord = base[0] + step_x*x  #
-            y_coord = base[1] + max_height*heightmap[x][y]
-            z_coord = base[2] + step_y*y
-            vertices.append((x_coord, y_coord, z_coord))
-    print("génération des sommets terminée")
-    return vertices # retourne la liste des sommets
-    
+def generate_csv(map, filename):
 
-'''
-    Génère les bordures et les surfaces de la carte
-'''
-def generate_tris():
-    edges = [] # bordures
-    surfaces = [] 
-
-    for x in range(MAP_SIZE[0]-1): 
-        for y in range(MAP_SIZE[1]-1):
-            
-            base = x*MAP_SIZE[0]+y # base pour les indices des sommets
-            a = base
-            b = base+1
-            c = base+MAP_SIZE[0]+1
-            d = base+MAP_SIZE[0]
-            edges.append((a, b)) # ajoute les bordures
-            edges.append((b, c)) 
-            edges.append((c, a))
-            edges.append((c, d))
-            edges.append((d, a))
-            surfaces.append((a, b, c))
-            surfaces.append((a, c, d))
-    print("génération des tris terminée")
-    return edges, surfaces
-
-'''
+    '''
     Génère un fichier csv à partir de la carte pour meilleur visualisation des données 
     map : carte
     filename : nom du fichier
 '''
-def generate_csv(map, filename):
+
     filename = filename + ".csv"
     with open(filename, "w") as file:
         for x in range(MAP_SIZE[0]):
@@ -251,10 +237,14 @@ def generate_csv(map, filename):
 
     return
 
-''' 
-    Exporte la texture de la carte
-'''
+
 def export_texture(heightmap, slopemap, filename):
+
+    
+    ''' 
+        Exporte la texture de la carte
+    '''
+
     image = Image.new('RGB', MAP_SIZE, 0)
     draw = ImageDraw.ImageDraw(image)
     for x in range(MAP_SIZE[0]):
@@ -264,43 +254,49 @@ def export_texture(heightmap, slopemap, filename):
     print(filename, "sauvegardé")
     return
 
-'''
-    Génère le chemin le plus court entre deux points choisi par l'utilisateur
-    start : point de départ
-    end : point d'arrivée
-    matrix : matrice de pente
-    heightmap : map
-'''
-def shortest_path(start, end, matrix, heightmap):
-    rows, cols = len(matrix), len(matrix[0])
-    distance = np.full((rows, cols), np.inf)  # Initialise les distances avec l'infini
-    visited = np.zeros((rows, cols), dtype=bool)  # Tableau pour marquer les points visités
-    distance[start[0]][start[1]] = 0  # La distance du point de départ à lui-même est zéro
 
-    # Parcours de la matrice pour calculer les distances
-    for i in range(start[0], rows):
-        for j in range(start[1], cols):
+def calculate_block(matrix, start, rows_range, cols_range, distance):
+    for i in rows_range:
+        for j in cols_range:
             if (i, j) != start:
-                # Distance depuis le voisin gauche ou haut (si existant)
                 distance[i][j] = abs(matrix[i][j]) + min(
                     distance[i - 1][j] if i > 0 else np.inf,
                     distance[i][j - 1] if j > 0 else np.inf
                 )
-
     return distance
 
-'''
-    Trouve le chemin optimal entre deux points
-    distance : matrice des distances
-    start : point de départ
-    end : point d'arrivée
-'''
+# Fonction principale pour gérer les threads
+def shortest_path_multithread(start, end, matrix):
+    rows, cols = len(matrix), len(matrix[0])
+    distance = np.full((rows, cols), np.inf)  # Initialise les distances avec l'infini
+    distance[start[0], start[1]] = 0  # La distance du point de départ à lui-même est zéro
+    
+    # Détermine les plages de lignes pour chaque thread
+    rows_per_thread = rows // num_threads
+    threads = []
+    results = []
+    
+    # Crée un pool de threads
+    with ThreadPoolExecutor(max_workers=num_threads) as executor:
+        for thread_id in range(num_threads):
+            row_start = thread_id * rows_per_thread
+            row_end = (thread_id + 1) * rows_per_thread if thread_id != num_threads - 1 else rows
+            threads.append(
+                executor.submit(calculate_block, matrix, start, range(row_start, row_end), range(cols), distance)
+            )
 
+        # Attendre que tous les threads soient terminés
+        for future in threads:
+            results.append(future.result())
+
+    # Combine les résultats dans une matrice finale
+    return distance
+
+# Fonction pour retrouver le chemin optimal
 def find_optimal_path(distance, start, end):
     path = [end]
     i, j = end
 
-    # Remontez le chemin depuis `end` vers `start`
     while (i, j) != start:
         if i > 0 and distance[i - 1, j] <= distance[i, j - 1]:
             i -= 1
@@ -313,7 +309,10 @@ def find_optimal_path(distance, start, end):
     path.reverse()
     return path
 
-'''
+
+def export_map_dijkstra(distance, filenameDijkstra, heightmap, slopemap, start, end):
+
+    '''
     Exporte la carte avec le chemin optimal en rouge
     distance : matrice des distances
     filenameDijkstra : nom du fichier
@@ -323,32 +322,35 @@ def find_optimal_path(distance, start, end):
     end : point d'arrivée
 '''
 
-def export_map_dijkstra(distance, filenameDijkstra, heightmap, slopemap, start, end):
-    shortest_path_route = find_optimal_path(distance, start, end)  # Récupère le chemin optimal de start à end
+    shortest_path_route = find_optimal_path(distance, start, end)  # Get the optimal path from start to end
 
-    # Crée une nouvelle image de la taille de la carte
+    # Create a new image of the map size
     image = Image.new('RGB', MAP_SIZE, 0)
     draw = ImageDraw.Draw(image)
 
     for x in range(MAP_SIZE[0]):
         for y in range(MAP_SIZE[1]):
-            # Si le point est dans le chemin optimal entre start et end, trace-le en rouge
+            # If the point is in the optimal path, color it red
             if (x, y) in shortest_path_route:
-                draw.point((x, y), (255, 0, 0))
+                draw.point((x, y), (255, 0, 0))  # Red for the optimal path
             else:
-                # Sinon, utilise les couleurs en fonction des maps de hauteur et de pente
-                draw.point((x, y), get_color(heightmap[x][y], slopemap[x][y]))        
+                # Otherwise, use the heightmap and slopemap colors
+                draw.point((x, y), get_color(heightmap[x][y], slopemap[x][y]))
 
-    # Sauvegarde l'image avec le chemin en rouge
+    # Save the image with the optimal path in red
     image.save(filenameDijkstra + ".png")
-    print(filenameDijkstra, "sauvegardé")
+    print(f"{filenameDijkstra}.png saved with the optimal path.")
 
-'''
+
+
+def plot_dijkstra(final_landscape, path):
+
+    '''
     Visualise la carte en 3D avec le chemin optimal
     final_landscape : carte de hauteur
     path : chemin optimal
 '''
-def plot_dijkstra(final_landscape, path):
+
     rows, cols = final_landscape.shape
     x = np.arange(rows)
     y = np.arange(cols)
@@ -374,8 +376,6 @@ def plot_dijkstra(final_landscape, path):
 def menu():
     heightmap = None
     slopemap = None
-    vertices = None
-    tris = None
     distance = None
     path = None
     start = (-1, -1)
@@ -398,10 +398,12 @@ def menu():
 
         if choice == "1":
             print("Génération de la carte...")
+            start_time = time.time()
             heightmap = generate_heightmap()  
             slopemap = generate_slopemap(heightmap)  
-            vertices = generate_vertices(heightmap) 
-            tris = generate_tris()  
+            end_time = time.time()
+            print(f"Temps de génération: {end_time - start_time} secondes pour une taille de {MAP_SIZE[0]}x{MAP_SIZE[1]}")
+            
             print("Carte générée avec succès.")
 
         elif choice == "2":
@@ -424,8 +426,9 @@ def menu():
                 while start[0] < 0 or start[0] >= MAP_SIZE[0] or start[1] < 0 or start[1] >= MAP_SIZE[1] or end[0] < 0 or end[0] >= MAP_SIZE[0] or end[1] < 0 or end[1] >= MAP_SIZE[1]:
                     start = int(input("Entrez la coordonnée x du point de départ: ")), int(input("Entrez la coordonnée y du point de départ: "))
                     end = int(input("Entrez la coordonnée x du point d'arrivée: ")), int(input("Entrez la coordonnée y du point d'arrivée: "))               
-                distance = shortest_path(start, end, slopemap, heightmap)
+                distance = shortest_path_multithread(start, end, heightmap)
                 path = find_optimal_path(distance, start, end)
+                
 
                 print(f'Chemin optimal de {start} à {end}: {path}')
                 print(f'Nombre de points dans le chemin: {len(path)}')
