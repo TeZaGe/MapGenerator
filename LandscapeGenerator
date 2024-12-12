@@ -8,14 +8,14 @@ import matplotlib.pyplot as plt
 import os
 
 from concurrent.futures import ThreadPoolExecutor
-from multiprocessing import Pool, cpu_count
+from multiprocessing import Pool, cpu_count, Process, Manager
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 import time
 
-MAP_SIZE = (2048, 2048) # taille de la carte
+MAP_SIZE = (1024, 1024) # taille de la carte
 SCALE = 256 # échelle de la carte
 EXPO_HEIGHT = 2 # exposant pour la normalisation de la hauteur 
 num_threads = cpu_count() - 1  # Nombre de threads pour le multithreading
@@ -318,47 +318,59 @@ def export_texture(heightmap, slopemap, filename):
 
 ''' Calcul du chemin optimal '''
 
-
-
-def calculate_block(matrix, start, rows_range, cols_range, distance):
+def calculate_block(matrix, start, rows_range, cols_range, distance, result_dict, process_id):
+    """
+    Calcul d'un bloc de la matrice pour le chemin le plus court.
+    """
+    local_distance = np.copy(distance)  # Copie locale pour éviter les conflits
     for i in rows_range:
         for j in cols_range:
             if (i, j) != start:
-                distance[i][j] = abs(matrix[i][j]) + min(
-                    distance[i - 1][j] if i > 0 else np.inf,
-                    distance[i][j - 1] if j > 0 else np.inf
+                local_distance[i, j] = abs(matrix[i][j]) + min(
+                    local_distance[i - 1, j] if i > 0 else np.inf,
+                    local_distance[i, j - 1] if j > 0 else np.inf
                 )
-    return distance
+    # Enregistre le résultat dans le dictionnaire partagé
+    result_dict[process_id] = local_distance
 
-# Fonction principale pour gérer les threads
-def shortest_path_multithread(start, end, matrix):
+def shortest_path_multiprocessing(start, end, matrix, num_processes):
+    """
+    Calcule le chemin le plus court en utilisant le multiprocessing.
+    """
     rows, cols = len(matrix), len(matrix[0])
     distance = np.full((rows, cols), np.inf)  # Initialise les distances avec l'infini
     distance[start[0], start[1]] = 0  # La distance du point de départ à lui-même est zéro
     
-    # Détermine les plages de lignes pour chaque thread
-    rows_per_thread = rows // num_threads
-    threads = []
-    results = []
+    rows_per_process = rows // num_processes  # Divise les lignes entre les processus
+    manager = Manager()
+    result_dict = manager.dict()  # Dictionnaire partagé pour collecter les résultats
     
-    # Crée un pool de threads
-    with ThreadPoolExecutor(max_workers=num_threads) as executor:
-        for thread_id in range(num_threads):
-            row_start = thread_id * rows_per_thread
-            row_end = (thread_id + 1) * rows_per_thread if thread_id != num_threads - 1 else rows
-            threads.append(
-                executor.submit(calculate_block, matrix, start, range(row_start, row_end), range(cols), distance)
-            )
+    processes = []
+    for process_id in range(num_processes):
+        row_start = process_id * rows_per_process
+        row_end = (process_id + 1) * rows_per_process if process_id != num_processes - 1 else rows
+        process = Process(
+            target=calculate_block, 
+            args=(matrix, start, range(row_start, row_end), range(cols), distance, result_dict, process_id)
+        )
+        processes.append(process)
+        process.start()
+    
+    # Attend la fin des processus
+    for process in processes:
+        process.join()
+    
+    # Combine les résultats
+    final_distance = np.full((rows, cols), np.inf)
+    for process_id, local_distance in result_dict.items():
+        final_distance = np.minimum(final_distance, local_distance)
+    
+    return final_distance
 
-        # Attendre que tous les threads soient terminés
-        for future in threads:
-            results.append(future.result())
-
-    # Combine les résultats dans une matrice finale
-    return distance
-
-# Fonction pour retrouver le chemin optimal
 def find_optimal_path(distance, start, end):
+    """
+    Retrouve le chemin optimal à partir de la matrice de distances.
+    """
     path = [end]
     i, j = end
 
@@ -498,7 +510,7 @@ def menu():
                     start = int(input("Entrez la coordonnée x du point de départ: ")), int(input("Entrez la coordonnée y du point de départ: "))
                     end = int(input("Entrez la coordonnée x du point d'arrivée: ")), int(input("Entrez la coordonnée y du point d'arrivée: "))   
                 start_time = time.time()            
-                distance = shortest_path_multithread(start, end, heightmap)
+                distance = shortest_path_multiprocessing(start, end, heightmap, num_threads)
                 path = find_optimal_path(distance, start, end)
                 end_time = time.time()
                 
