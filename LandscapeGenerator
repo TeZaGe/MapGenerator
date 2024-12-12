@@ -6,17 +6,20 @@ import numpy as np
 import csv
 import matplotlib.pyplot as plt
 import os
+
 from concurrent.futures import ThreadPoolExecutor
+from multiprocessing import Pool, cpu_count
+
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+
 import time
-from multiprocessing import Pool
-import dask.array as da
 
-
-
-MAP_SIZE = (512, 512) # taille de la carte
+MAP_SIZE = (2048, 2048) # taille de la carte
 SCALE = 256 # échelle de la carte
 EXPO_HEIGHT = 2 # exposant pour la normalisation de la hauteur 
-num_threads=4 # nombre de threads pour le calcul de la carte de pente
+num_threads = cpu_count() - 1  # Nombre de threads pour le multithreading
+
 # Couleurs pour la texture
 COLORS = {
     "grass" : (34,139,34),
@@ -36,96 +39,7 @@ lut_vectors = (
 )
 
 
-
-def put_file_in_folder():
-
-    '''
-    Déplace un fichier dans un dossier
-    filename : nom du fichier à déplacer
-'''
-
-    folder_path = "./map" # chemin du dossier
-    if not os.path.exists(folder_path):
-        os.makedirs(folder_path) # crée le dossier s'il n'existe pas
-    
-    for file in os.listdir("."):
-        if file.endswith(".png"):
-            os.rename(file, os.path.join(folder_path, file))
-            print(f"Fichier {file} déplacé avec succès dans {folder_path}")
-
-
-
-def delete_file(filename):
-
-    '''
-    Supprime un fichier dans le dossier map
-    filename : nom du fichier à supprimer
-'''
-
-    folder_path = "./map"
-    file_path = os.path.join(folder_path, filename)
-
-    if os.path.exists(file_path):
-        os.remove(file_path) # supprime le fichier
-        print(f"Fichier {filename} supprimé avec succès")
-    else:
-        print(f"Erreur: Le fichier {filename} n'existe pas")
-
-
-
-
-def delete_all_files():
-
-    '''
-    Supprime tous les fichiers dans le dossier map
-'''
-
-
-    folder_path = "./map"
-    count = 0 # compteur de fichiers supprimés
-
-    for filename in os.listdir(folder_path):
-        file_path = os.path.join(folder_path, filename)
-        os.remove(file_path)
-        count += 1
-        print(f"Fichier {filename} supprimé avec succès")
-    print(f"Total de {count} fichiers supprimés")
-
-
-
-def update_point(coords, seed):
-
-    '''
-    Met à jour la valeur d'un point de la carte de hauteur
-    coords : tuple (x, y)
-    seed : générateur de bruit de perlin 
-'''
-
-    x, y = coords
-    noise = PerlinNoise(octaves=6, seed=seed) # utilisation de la librairie perlin noise pour générer le bruit de perlin 
-    value = noise([x/SCALE, y/SCALE]) 
-    return value # retourne la valeur du bruit de perlin pour les coordonnées x, y
-
-
-
-def normalize(input_map, minimum, maximum, expo):
-
-    '''
-    Normalise la carte de hauteur entre 0 et 1
-    input_map : la carte à normaliser
-    minimum : valeur minimale de la carte
-    maximum : valeur maximale de la carte
-    expo : exposant pour la normalisation 
-'''
-
-    scale = maximum - minimum
-    output_map = np.zeros(MAP_SIZE)
-    for x in range(MAP_SIZE[0]):
-        for y in range(MAP_SIZE[1]):
-            output_map[x][y] = ((input_map[x][y] - minimum)/scale)**expo
-    return output_map
-
-
+''' Partie non threadée '''
 
 def generate_heightmap():
     
@@ -150,22 +64,6 @@ def generate_heightmap():
                 maximum = new_value
     print("Carte de hauteur générée avec la seed :", seed)
     return normalize(heightmap, minimum, maximum, EXPO_HEIGHT)
-
-
-
-def out_of_bounds(coord):
-
-    '''
-    Vérifie si les coordonnées sont en dehors de la carte
-    coord : tuple (x, y)
-'''
-
-    if coord[0] < 0 or coord[0] >= MAP_SIZE[0]:
-        return True # si les coordonnées sont en dehors de la carte
-    if coord[1] < 0 or coord[1] >= MAP_SIZE[1]:
-        return True # si les coordonnées sont en dehors de la carte
-    return False # si les coordonnées sont dans la carte
-
 
 def generate_slopemap(heightmap):
 
@@ -195,6 +93,169 @@ def generate_slopemap(heightmap):
                 maximum = slope
     print("Slopemap generated")
     return normalize(slopemap, minimum, maximum, 1)
+
+
+'''Gestion des fichiers'''
+
+def put_file_in_folder():
+
+    '''
+    Déplace un fichier dans un dossier
+    filename : nom du fichier à déplacer
+'''
+
+    folder_path = "./map" # chemin du dossier
+    if not os.path.exists(folder_path):
+        os.makedirs(folder_path) # crée le dossier s'il n'existe pas
+    
+    for file in os.listdir("."):
+        if file.endswith(".png"):
+            os.rename(file, os.path.join(folder_path, file))
+            print(f"Fichier {file} déplacé avec succès dans {folder_path}")
+
+def delete_file(filename):
+
+    '''
+    Supprime un fichier dans le dossier map
+    filename : nom du fichier à supprimer
+'''
+
+    folder_path = "./map"
+    file_path = os.path.join(folder_path, filename)
+
+    if os.path.exists(file_path):
+        os.remove(file_path) # supprime le fichier
+        print(f"Fichier {filename} supprimé avec succès")
+    else:
+        print(f"Erreur: Le fichier {filename} n'existe pas")
+
+def delete_all_files():
+
+    '''
+    Supprime tous les fichiers dans le dossier map
+'''
+
+
+    folder_path = "./map"
+    count = 0 # compteur de fichiers supprimés
+
+    for filename in os.listdir(folder_path):
+        file_path = os.path.join(folder_path, filename)
+        os.remove(file_path)
+        count += 1
+        print(f"Fichier {filename} supprimé avec succès")
+    print(f"Total de {count} fichiers supprimés")
+
+
+''' Partie calculs '''
+
+
+def update_point(coords, seed):
+
+    '''
+    Met à jour la valeur d'un point de la carte de hauteur
+    coords : tuple (x, y)
+    seed : générateur de bruit de perlin 
+'''
+
+    x, y = coords
+    noise = PerlinNoise(octaves=6, seed=seed) # utilisation de la librairie perlin noise pour générer le bruit de perlin 
+    value = noise([x/SCALE, y/SCALE]) 
+    return value # retourne la valeur du bruit de perlin pour les coordonnées x, y
+
+def normalize(input_map, minimum, maximum, expo):
+
+    '''
+    Normalise la carte de hauteur entre 0 et 1
+    input_map : la carte à normaliser
+    minimum : valeur minimale de la carte
+    maximum : valeur maximale de la carte
+    expo : exposant pour la normalisation 
+'''
+    scale = maximum - minimum
+    output_map = np.zeros(MAP_SIZE)
+    for x in range(MAP_SIZE[0]):
+        for y in range(MAP_SIZE[1]):
+            output_map[x][y] = ((input_map[x][y] - minimum)/scale)**expo
+    return output_map
+
+
+''' Partie threadée '''
+def process_chunk(chunk_coords, seed):
+    """Traite une portion de la carte pour générer la hauteur."""
+    results = {}
+    for x, y in chunk_coords:
+        results[(x, y)] = update_point((x, y), seed)
+    return results
+
+
+def generate_heightmap_multiprocessing():
+    seed = int(random.random() * 1000)
+    heightmap = np.zeros(MAP_SIZE)
+
+    # Divise les coordonnées en blocs pour chaque processus
+    all_coords = [(x, y) for x in range(MAP_SIZE[0]) for y in range(MAP_SIZE[1])]
+    chunks = np.array_split(all_coords, num_threads)
+
+    with Pool(processes=num_threads) as pool:
+        results = pool.starmap(process_chunk, [(chunk, seed) for chunk in chunks])
+
+    # Met à jour la carte de hauteur
+    for result in results:
+        for (x, y), value in result.items():
+            heightmap[x, y] = value
+
+    # Normalise la carte de hauteur
+    print("Carte de hauteur générée avec la seed :", seed)
+    return normalize(heightmap, np.min(heightmap), np.max(heightmap), EXPO_HEIGHT)
+
+
+def process_slope_chunk(chunk_coords, heightmap, lut_vectors):
+    """Calcule les pentes pour une portion de la carte."""
+    results = {}
+    for x, y in chunk_coords:
+        z = heightmap[x, y]
+        slopes = [
+            abs(z - heightmap[x + dx, y + dy])
+            for dx, dy in lut_vectors
+            if not out_of_bounds((x + dx, y + dy))
+        ]
+        results[(x, y)] = sum(slopes) / len(slopes) if slopes else 0
+    return results
+
+
+def generate_slopemap_multiprocessing(heightmap):
+    slopemap = np.zeros(MAP_SIZE)
+
+    # Divise les coordonnées en blocs pour chaque processus
+    all_coords = [(x, y) for x in range(MAP_SIZE[0]) for y in range(MAP_SIZE[1])]
+    chunks = np.array_split(all_coords, num_threads)
+
+    with Pool(processes=num_threads) as pool:
+        results = pool.starmap(process_slope_chunk, [(chunk, heightmap, lut_vectors) for chunk in chunks])
+
+    # Met à jour la carte de pente
+    for result in results:
+        for (x, y), slope in result.items():
+            slopemap[x, y] = slope
+
+    # Normalise la carte de pente
+    print("Carte de pente générée.")
+    return normalize(slopemap, np.min(slopemap), np.max(slopemap), 1)
+
+
+def out_of_bounds(coord):
+    """
+    Vérifie si les coordonnées sont en dehors de la carte.
+    coord : tuple (x, y)
+    """
+    x, y = coord
+    return x < 0 or x >= MAP_SIZE[0] or y < 0 or y >= MAP_SIZE[1]
+
+
+
+''' Exportation des données '''
+
 
 
 def get_color(height, slope):
@@ -253,6 +314,10 @@ def export_texture(heightmap, slopemap, filename):
     image.save(filename + ".png") 
     print(filename, "sauvegardé")
     return
+
+
+''' Calcul du chemin optimal '''
+
 
 
 def calculate_block(matrix, start, rows_range, cols_range, distance):
@@ -342,7 +407,6 @@ def export_map_dijkstra(distance, filenameDijkstra, heightmap, slopemap, start, 
     print(f"{filenameDijkstra}.png saved with the optimal path.")
 
 
-
 def plot_dijkstra(final_landscape, path):
 
     '''
@@ -373,6 +437,9 @@ def plot_dijkstra(final_landscape, path):
     plt.show()
 
 
+
+''' Menu '''
+
 def menu():
     heightmap = None
     slopemap = None
@@ -391,6 +458,7 @@ def menu():
         print("| 4. Calculer et exporter le chemin  |")
         print("| 5. Supprimer un fichier            |")
         print("| 6. Supprimer tous les fichiers     |")
+        print("| 7. Générer la carte multithreading |")
         print("| 10. Quitter                        |")
         print("+------------------------------------+")
 
@@ -399,8 +467,8 @@ def menu():
         if choice == "1":
             print("Génération de la carte...")
             start_time = time.time()
-            heightmap = generate_heightmap()  
-            slopemap = generate_slopemap(heightmap)  
+            heightmap = generate_heightmap()
+            slopemap = generate_slopemap(heightmap)
             end_time = time.time()
             print(f"Temps de génération: {end_time - start_time} secondes pour une taille de {MAP_SIZE[0]}x{MAP_SIZE[1]}")
             
@@ -417,7 +485,10 @@ def menu():
         elif choice == "3":
             if heightmap is not None:
                 filename = input("Entrez le nom du fichier CSV (ex: matrice): ")
+                start_time = time.time()
                 generate_csv(heightmap, filename)
+                end_time = time.time()
+                print(f"Temps d'exportation: {end_time - start_time} secondes pour une taille de {MAP_SIZE[0]}x{MAP_SIZE[1]}")
             else:
                 print("Erreur: La matrice n'a pas été générée. Veuillez générer la carte d'abord (Option 1).")
 
@@ -425,21 +496,27 @@ def menu():
             if heightmap is not None and slopemap is not None:
                 while start[0] < 0 or start[0] >= MAP_SIZE[0] or start[1] < 0 or start[1] >= MAP_SIZE[1] or end[0] < 0 or end[0] >= MAP_SIZE[0] or end[1] < 0 or end[1] >= MAP_SIZE[1]:
                     start = int(input("Entrez la coordonnée x du point de départ: ")), int(input("Entrez la coordonnée y du point de départ: "))
-                    end = int(input("Entrez la coordonnée x du point d'arrivée: ")), int(input("Entrez la coordonnée y du point d'arrivée: "))               
+                    end = int(input("Entrez la coordonnée x du point d'arrivée: ")), int(input("Entrez la coordonnée y du point d'arrivée: "))   
+                start_time = time.time()            
                 distance = shortest_path_multithread(start, end, heightmap)
                 path = find_optimal_path(distance, start, end)
+                end_time = time.time()
                 
 
                 print(f'Chemin optimal de {start} à {end}: {path}')
                 print(f'Nombre de points dans le chemin: {len(path)}')
+                print(f"Temps de calcul: {end_time - start_time} secondes pour une taille de {MAP_SIZE[0]}x{MAP_SIZE[1]}")
                 
                 filenameDikstra = input("Entrez le nom du fichier pour la carte Dijkstra (ex: dijkstra): ")
 
                 export_map_dijkstra(distance, filenameDikstra, heightmap, slopemap, start, end)
                 print("Chemin optimal exporté avec succès.")
                 put_file_in_folder()
-                plot_dijkstra(heightmap, path)
-                print("Pour Re obtenir le menu il faut fermer la fenêtre de la visualisation 3D")
+                if(input("Voulez-vous visualiser le chemin optimal en 3D ? (O/N) ") == "O"):
+                    plot_dijkstra(heightmap, path)
+                    print("Pour Re obtenir le menu il faut fermer la fenêtre de la visualisation 3D")
+                else:
+                    print("Visualisation 3d annulée.")
             else:
                 print("Erreur: La carte n'a pas été générée. Veuillez générer la carte d'abord (Option 1).")
 
@@ -483,8 +560,17 @@ def menu():
             print("Sortie du programme.")
             break
 
+        elif choice == "7":
+            print("Génération de la carte avec multithreading...")
+            start_time = time.time()
+            heightmap = generate_heightmap_multiprocessing	()
+            slopemap = generate_slopemap_multiprocessing(heightmap)
+            end_time = time.time()
+            print(f"Temps de génération avec multithreading: {end_time - start_time} secondes pour une taille de {MAP_SIZE[0]}x{MAP_SIZE[1]}")
+            print("Carte générée avec succès.")
         else:
             print("Option invalide. Veuillez réessayer.")
+
 
 def main():
     menu()
