@@ -6,6 +6,7 @@ import numpy as np
 import csv
 import matplotlib.pyplot as plt
 import os
+import multiprocessing
 
 from concurrent.futures import ThreadPoolExecutor
 from multiprocessing import Pool, cpu_count, Process, Manager
@@ -94,6 +95,52 @@ def generate_slopemap(heightmap):
     print("Slopemap generated")
     return normalize(slopemap, minimum, maximum, 1)
 
+def shortest_path(start, end, matrix, heightmap):
+    '''
+        Trouve le chemin optimal entre deux points
+        distance : matrice des distances
+        start : point de départ
+        end : point d'arrivée
+    '''
+
+    rows, cols = len(matrix), len(matrix[0])
+    distance = np.full((rows, cols), np.inf)  # Initialise les distances avec l'infini
+    visited = np.zeros((rows, cols), dtype=bool)  # Tableau pour marquer les points visités
+    distance[start[0]][start[1]] = 0  # La distance du point de départ à lui-même est zéro
+    # Parcours de la matrice pour calculer les distances
+    for i in range(start[0], rows):
+        for j in range(start[1], cols):
+            if (i, j) != start:
+                # Distance depuis le voisin gauche ou haut (si existant)
+                distance[i][j] = abs(matrix[i][j]) + min(
+                    distance[i - 1][j] if i > 0 else np.inf,
+                    distance[i][j - 1] if j > 0 else np.inf
+                )
+    return distance
+
+def find_optimal_path(distance, start, end):
+    '''
+        Trouve le chemin optimal entre deux points
+        distance : matrice des distances
+        start : point de départ
+        end : point d'arrivée
+    '''
+
+    path = [end]
+    i, j = end
+    # Remontez le chemin depuis `end` vers `start`
+    while (i, j) != start:
+        if i > 0 and distance[i - 1, j] <= distance[i, j - 1]:
+            i -= 1
+        elif j > 0 and distance[i, j - 1] <= distance[i - 1, j]:
+            j -= 1
+        else:
+            break
+        path.append((i, j))
+    path.reverse()
+    return path
+
+
 
 '''Gestion des fichiers'''
 
@@ -181,6 +228,7 @@ def normalize(input_map, minimum, maximum, expo):
 
 
 ''' Partie threadée '''
+
 def process_chunk(chunk_coords, seed):
     """Traite une portion de la carte pour générer la hauteur."""
     results = {}
@@ -253,9 +301,7 @@ def out_of_bounds(coord):
     return x < 0 or x >= MAP_SIZE[0] or y < 0 or y >= MAP_SIZE[1]
 
 
-
 ''' Exportation des données '''
-
 
 
 def get_color(height, slope):
@@ -319,6 +365,7 @@ def export_texture(heightmap, slopemap, filename):
 ''' Calcul du chemin optimal '''
 
 def calculate_block(matrix, start, rows_range, cols_range, distance, result_dict, process_id):
+    # result_dict = {}  # Remove re-initialization of result_dict
     """
     Calcul d'un bloc de la matrice pour le chemin le plus court.
     """
@@ -386,9 +433,17 @@ def find_optimal_path(distance, start, end):
     path.reverse()
     return path
 
+def process_export_chunk(chunk_coords, heightmap, slopemap, shortest_path_route):
+    """Traite une portion de la carte pour l'exportation."""
+    results = {}
+    for x, y in chunk_coords:
+        if (x, y) in shortest_path_route:
+            results[(x, y)] = (255, 0, 0)  # Red for the optimal path
+        else:
+            results[(x, y)] = get_color(heightmap[x][y], slopemap[x][y])
+    return results
 
 def export_map_dijkstra(distance, filenameDijkstra, heightmap, slopemap, start, end):
-
     '''
     Exporte la carte avec le chemin optimal en rouge
     distance : matrice des distances
@@ -397,27 +452,29 @@ def export_map_dijkstra(distance, filenameDijkstra, heightmap, slopemap, start, 
     slopemap : carte de pente
     start : point de départ
     end : point d'arrivée
-'''
+    '''
 
     shortest_path_route = find_optimal_path(distance, start, end)  # Get the optimal path from start to end
+
+    # Divise les coordonnées en blocs pour chaque processus
+    all_coords = [(x, y) for x in range(MAP_SIZE[0]) for y in range(MAP_SIZE[1])]
+    chunks = np.array_split(all_coords, num_threads)
+
+    with Pool(processes=num_threads) as pool:
+        results = pool.starmap(process_export_chunk, [(chunk, heightmap, slopemap, shortest_path_route) for chunk in chunks])
 
     # Create a new image of the map size
     image = Image.new('RGB', MAP_SIZE, 0)
     draw = ImageDraw.Draw(image)
 
-    for x in range(MAP_SIZE[0]):
-        for y in range(MAP_SIZE[1]):
-            # If the point is in the optimal path, color it red
-            if (x, y) in shortest_path_route:
-                draw.point((x, y), (255, 0, 0))  # Red for the optimal path
-            else:
-                # Otherwise, use the heightmap and slopemap colors
-                draw.point((x, y), get_color(heightmap[x][y], slopemap[x][y]))
+    # Met à jour l'image avec les résultats
+    for result in results:
+        for (x, y), color in result.items():
+            draw.point((x, y), color)
 
     # Save the image with the optimal path in red
     image.save(filenameDijkstra + ".png")
     print(f"{filenameDijkstra}.png saved with the optimal path.")
-
 
 def plot_dijkstra(final_landscape, path):
 
@@ -449,7 +506,6 @@ def plot_dijkstra(final_landscape, path):
     plt.show()
 
 
-
 ''' Menu '''
 
 def menu():
@@ -471,6 +527,7 @@ def menu():
         print("| 5. Supprimer un fichier            |")
         print("| 6. Supprimer tous les fichiers     |")
         print("| 7. Générer la carte multithreading |")
+        print("| 8. Générer tous les chemins        |")
         print("| 10. Quitter                        |")
         print("+------------------------------------+")
 
@@ -520,8 +577,11 @@ def menu():
                 print(f"Temps de calcul: {end_time - start_time} secondes pour une taille de {MAP_SIZE[0]}x{MAP_SIZE[1]}")
                 
                 filenameDikstra = input("Entrez le nom du fichier pour la carte Dijkstra (ex: dijkstra): ")
-
+                
+                start_time = time.time()
                 export_map_dijkstra(distance, filenameDikstra, heightmap, slopemap, start, end)
+                end_time = time.time()
+                print(f"Temps d'exportation: {end_time - start_time} secondes pour une taille de {MAP_SIZE[0]}x{MAP_SIZE[1]}")
                 print("Chemin optimal exporté avec succès.")
                 put_file_in_folder()
                 if(input("Voulez-vous visualiser le chemin optimal en 3D ? (O/N) ") == "O"):
@@ -580,10 +640,32 @@ def menu():
             end_time = time.time()
             print(f"Temps de génération avec multithreading: {end_time - start_time} secondes pour une taille de {MAP_SIZE[0]}x{MAP_SIZE[1]}")
             print("Carte générée avec succès.")
+
+
+        elif choice == "8":
+            if heightmap is not None and slopemap is not None:
+                while start[0] < 0 or start[0] >= MAP_SIZE[0] or start[1] < 0 or start[1] >= MAP_SIZE[1] or end[0] < 0 or end[0] >= MAP_SIZE[0] or end[1] < 0 or end[1] >= MAP_SIZE[1]:
+                    start = int(input("Entrez la coordonnée x du point de départ: ")), int(input("Entrez la coordonnée y du point de départ: "))
+                    end = int(input("Entrez la coordonnée x du point d'arrivée: ")), int(input("Entrez la coordonnée y du point d'arrivée: "))       
+                start_time = time.time()        
+                distance = shortest_path(start, end, slopemap, heightmap)
+                path = find_optimal_path(distance, start, end)
+                end_time = time.time()
+                print(f'Chemin optimal de {start} à {end}: {path}')
+                print(f'Nombre de points dans le chemin: {len(path)}')
+                print(f"Temps de calcul: {end_time - start_time} secondes pour une taille de {MAP_SIZE[0]}x{MAP_SIZE[1]}")
+                
+                filenameDikstra = input("Entrez le nom du fichier pour la carte Dijkstra (ex: dijkstra): ")
+                export_map_dijkstra(distance, filenameDikstra, heightmap, slopemap, start, end)
+                print("Chemin optimal exporté avec succès.")
+                put_file_in_folder()
+
         else:
             print("Option invalide. Veuillez réessayer.")
 
+        
 
+  
 def main():
     menu()
 

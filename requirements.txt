@@ -1,0 +1,6 @@
+perl
+Pillow
+perlin-noise
+numpy
+matplotlib
+multiprocessing
