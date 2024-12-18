@@ -146,20 +146,26 @@ def find_optimal_path(distance, start, end):
 '''Gestion des fichiers'''
 
 def put_file_in_folder():
-
     '''
-    Déplace un fichier dans un dossier
-    filename : nom du fichier à déplacer
-'''
+    Déplace les fichiers PNG dans le dossier map et les fichiers CSV dans le dossier csv
+    '''
 
-    folder_path = "./map" # chemin du dossier
-    if not os.path.exists(folder_path):
-        os.makedirs(folder_path) # crée le dossier s'il n'existe pas
-    
+    folder_path_png = "./map"  # chemin du dossier pour les PNG
+    folder_path_csv = "./csv"  # chemin du dossier pour les CSV
+
+    if not os.path.exists(folder_path_png):
+        os.makedirs(folder_path_png)  # crée le dossier s'il n'existe pas
+
+    if not os.path.exists(folder_path_csv):
+        os.makedirs(folder_path_csv)  # crée le dossier s'il n'existe pas
+
     for file in os.listdir("."):
         if file.endswith(".png"):
-            os.rename(file, os.path.join(folder_path, file))
-            print(f"Fichier {file} déplacé avec succès dans {folder_path}")
+            os.rename(file, os.path.join(folder_path_png, file))
+            print(f"Fichier {file} déplacé avec succès dans {folder_path_png}")
+        elif file.endswith(".csv"):
+            os.rename(file, os.path.join(folder_path_csv, file))
+            print(f"Fichier {file} déplacé avec succès dans {folder_path_csv}")
 
 def delete_file(filename):
 
@@ -595,10 +601,9 @@ def menu():
         elif choice == "3":
             if heightmap is not None:
                 filename = input("Entrez le nom du fichier CSV (ex: matrice): ")
-                start_time = time.time()
                 generate_csv(heightmap, filename)
-                end_time = time.time()
-                print(f"Temps d'exportation: {end_time - start_time} secondes pour une taille de {MAP_SIZE[0]}x{MAP_SIZE[1]}")
+                put_file_in_folder()
+
             else:
                 print("Erreur: La matrice n'a pas été générée. Veuillez générer la carte d'abord (Option 1).")
 
