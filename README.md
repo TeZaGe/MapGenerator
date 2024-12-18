@@ -10,9 +10,15 @@ Ce projet implémente la génération de cartes en utilisant des techniques de m
   - Génération classique (mono-thread).
   - Génération optimisée avec multi-processing, permettant une accélération significative en utilisant plusieurs cœurs du CPU.
 
+![map](https://github.com/user-attachments/assets/7430a341-28ee-4e48-9e5b-5f50316e55fc)
+
 - **Calcul du chemin le plus court :**
   - Version classique.
   - Version avec multi-processing.
+
+![coord](https://github.com/user-attachments/assets/57e3beee-457c-4ed6-8f05-69ccd05df19c)
+![chemincourt](https://github.com/user-attachments/assets/0ee622d4-fd35-44a1-b445-ee19ffe4cb0e)
+
 
 - **Exportation :**
   - Exportation des cartes générées, avec ou sans chemin le plus court, optimisée pour gérer de grandes cartes (exemple : 2048 x 2048).
@@ -24,7 +30,8 @@ Ce projet implémente la génération de cartes en utilisant des techniques de m
 
 ### Génération de carte
 ## Pour réaliser nos comparatif on va prendre une map de (1024 x 1024)
-![alt text](imageREADME/image.png)
+![image](https://github.com/user-attachments/assets/b7edd8da-098d-4315-83da-8814b3b03d8a)
+
 - **Sans multi-threading :**
   -  159.9 secondes.
 
