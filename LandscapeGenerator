@@ -28,7 +28,8 @@ COLORS = {
     "sand" : (238, 214, 175),
     "water" : (65,105,225),
     "rock" : (139, 137, 137),
-    "snow" : (255, 250, 250)
+    "snow" : (255, 250, 250),
+    "explosion" : (255, 0, 0)
 }
 
 
@@ -506,6 +507,45 @@ def plot_dijkstra(final_landscape, path):
     plt.show()
 
 
+
+
+
+''' PARTIE FUN '''
+
+def explode_map(map_matrix, explosion_center=None, radius=20, impact=-0.2):
+    """
+    Explodes a part of the map by modifying values in a given region.
+
+    :param map_matrix: The matrix representing the map.
+    :param explosion_center: The (x, y) coordinates of the explosion center. Random if None.
+    :param radius: The radius of the explosion.
+    :param impact: The value to subtract from impacted cells.
+    """
+    rows, cols = map_matrix.shape
+    if explosion_center is None:
+        explosion_center = (random.randint(0, rows - 1), random.randint(0, cols - 1))
+    x_center, y_center = explosion_center
+
+    y, x = np.ogrid[:rows, :cols]
+    mask = (x - x_center)**2 + (y - y_center)**2 <= radius**2
+    map_matrix[mask] += impact
+    map_matrix[map_matrix < 0] = 0  # Ensure no negative values
+    return map_matrix
+
+def get_valid_input(prompt, input_type, min_val=None, max_val=None):
+    """
+    Get validated user input.
+    """
+    while True:
+        try:
+            value = input_type(input(prompt))
+            if (min_val is not None and value < min_val) or (max_val is not None and value > max_val):
+                raise ValueError("Value out of range.")
+            return value
+        except ValueError as e:
+            print(f"Invalid input: {e}")
+
+
 ''' Menu '''
 
 def menu():
@@ -528,6 +568,7 @@ def menu():
         print("| 6. Supprimer tous les fichiers     |")
         print("| 7. Générer la carte multithreading |")
         print("| 8. Générer tous les chemins        |")
+        print("| 9. MACRON EXPLOSION                |")
         print("| 10. Quitter                        |")
         print("+------------------------------------+")
 
@@ -659,6 +700,14 @@ def menu():
                 export_map_dijkstra(distance, filenameDikstra, heightmap, slopemap, start, end)
                 print("Chemin optimal exporté avec succès.")
                 put_file_in_folder()
+
+        elif choice == "9":
+            x = get_valid_input(f"Enter explosion center X (0 to {MAP_SIZE[0] - 1}): ", int, 0, MAP_SIZE[0] - 1)
+            y = get_valid_input(f"Enter explosion center Y (0 to {MAP_SIZE[1] - 1}): ", int, 0, MAP_SIZE[1] - 1)
+            radius = get_valid_input("Enter explosion radius: ", int, 1)
+            impact = get_valid_input("Enter explosion impact (negative value): ", float)
+            heightmap = explode_map(heightmap, explosion_center=(x, y), radius=radius, impact=impact)
+            print("Explosion applied to the map.")
 
         else:
             print("Option invalide. Veuillez réessayer.")

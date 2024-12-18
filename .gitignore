@@ -1,0 +1,5 @@
+# Ignorer tout le contenu du dossier map
+map/*
+
+# Garder le dossier map dans le dépôt
+!map/.gitkeep
