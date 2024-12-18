@@ -24,7 +24,7 @@ Ce projet implémente la génération de cartes en utilisant des techniques de m
 
 ### Génération de carte
 ## Pour réaliser nos comparatif on va prendre une map de (1024 x 1024)
-![alt text](image.png)
+![alt text](imageREADME/image.png)
 - **Sans multi-threading :**
   -  159.9 secondes.
 
